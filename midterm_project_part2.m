@@ -65,6 +65,8 @@ xlabel('Time [s]');
 ylabel('Position [rad]');
 legend('Output', 'Reference');
 grid on;
+title('Steering Response for 12 V Command at 10 m/s');
+xlim([0 , 0.07]);
 
 %% =================== FREQUENCY RESPONSE ===================
 figure('Name', 'Part II.b Closed-loop Bode', 'NumberTitle', 'off');
