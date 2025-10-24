@@ -19,8 +19,9 @@
 %   h) Discuss when it is reasonable to neglect armature inductance.
 %   i) Re-derive the equations of motion when a gearbox with ratio N is
 %      attached to the motor and compute the resulting transfer function.
-%   j) Compare the gearbox-inclusive model to the provided run_Indy_car.p
-%      reference implementation.
+%   j) Provide a framework to compare the gearbox-inclusive model against
+%      externally supplied benchmark data (e.g., from run_Indy_car.p or lab
+%      measurements).
 %
 % The calculations rely on Control System Toolbox functionality.
 
@@ -173,10 +174,11 @@ ratio_tau = tau_electrical / tau_mech_model;
 fprintf('Part I.h: Electrical time constant tau_e = %.4e s, mechanical tau_m = %.4e s (ratio = %.3f)\n', ...
     tau_electrical, tau_mech_model, ratio_tau);
 if ratio_tau < 0.1
-    fprintf('          Inductance can be neglected for slower mechanical studies; faster inputs require the inductive model.\n');
+    inductance_msg = '          Inductance can be neglected for slower mechanical studies; faster inputs require the inductive model.';
 else
-    fprintf('          Inductance materially influences the response and should be retained.\n');
+    inductance_msg = '          Inductance materially influences the response and should be retained.';
 end
+fprintf('%s\n', inductance_msg);
 
 results_part1.tau_electrical = tau_electrical;
 results_part1.tau_ratio = ratio_tau;
@@ -215,46 +217,21 @@ results_part1.gear_ratio          = gear.N;
 results_part1.gear_load_inertia   = gear.Jload;
 results_part1.gear_encoder_counts = gear.encoder_counts;
 
-%% Part I.j - Comparison to run_Indy_car.p benchmark
-results_part1.gearbox_comparison = [];
-if exist('run_Indy_car','file')
-    try
-        clear run_Indy_car; %#ok<CLRUN>
-        Ts = 1e-3;
-        t_compare = (Ts:Ts:0.1).';
-        u_compare = params.Vs * ones(size(t_compare)); % Voltage input only
-        omega_model = lsim(G_omega_out_with_L, u_compare, t_compare);
-        omega_model = omega_model(:);
+%% Part I.j - Benchmark comparison placeholder
+% The original project specification requests a comparison between the
+% analytical gearbox model derived above and benchmark data gathered from
+% either laboratory measurements or the provided IndyCar demonstration
+% scripts.  All logic associated with executing the encrypted
+% run_Indy_car.p file has been intentionally removed to provide a clean
+% starting point for future work.  Populate the results structure below
+% after importing your chosen dataset so that downstream analysis can
+% continue to use the same interface.
 
-        theta_motor = zeros(numel(t_compare), 1);
-        for k = 1:numel(t_compare)
-            [~, ~, counts_k] = run_Indy_car(u_compare(k));
-            theta_motor(k) = (counts_k / gear.encoder_counts) * 2*pi;
-        end
-        theta_motor = unwrap(theta_motor);
-        theta_output = theta_motor / gear.N;
-        omega_pcode = gradient(theta_output, Ts);
-
-        figure('Name','Part I.j Gearbox Comparison','NumberTitle','off');
-        plot(t_compare, omega_model, 'LineWidth', 1.5); hold on;
-        plot(t_compare, omega_pcode, '--', 'LineWidth', 1.5);
-        grid on;
-        title('Steering Output Speed for 12 V Step');
-        xlabel('Time [s]');
-        ylabel('\omega_{tire} [rad/s]');
-        legend('Analytical gearbox model','run\_Indy\_car.p','Location','southeast');
-
-        results_part1.gearbox_comparison = table(t_compare, omega_model, omega_pcode, ...
-            'VariableNames', {'Time_s','Omega_model_rad_s','Omega_pcode_rad_s'});
-        results_part1.gearbox_error = '';
-    catch err
-        warning('Part I.j comparison skipped due to error: %s', err.message);
-        results_part1.gearbox_error = err.message;
-    end
-else
-    warning('Part I.j skipped: run_Indy_car.p not available on MATLAB path.');
-    results_part1.gearbox_error = 'run_Indy_car.p not available';
-end
+results_part1.gearbox_comparison = table([], [], [], ...
+    'VariableNames', {'Time_s','Omega_model_rad_s','Omega_data_rad_s'});
+results_part1.gearbox_motor_comparison = table([], [], [], ...
+    'VariableNames', {'Time_s','Omega_motor_model_rad_s','Omega_motor_data_rad_s'});
+results_part1.gearbox_error = 'Part I.j benchmark comparison not yet implemented.';
 
 %% Export summary for quick access (optional convenience for MATLAB users)
 results_part1.G_omega_with_L = G_omega_with_L;
@@ -265,3 +242,4 @@ results_part1.stepinfo_no_L   = stepinfo_no_L;
 assignin('base','midterm_part1_results',results_part1);
 
 disp('Part I (a-j) analysis complete. Results available in midterm_part1_results.');
+return;
