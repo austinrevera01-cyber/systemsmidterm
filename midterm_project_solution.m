@@ -244,6 +244,7 @@ if exist('gearbox_reference','var')
 
         omega_model = lsim(G_omega_out_with_L, u_ref, t_ref);
 
+        % Visualization
         figure('Name','Part I.j Gearbox Comparison','NumberTitle','off');
         plot(t_ref, omega_model, 'LineWidth', 1.5); hold on;
         plot(t_ref, omega_ref, '--', 'LineWidth', 1.5);
