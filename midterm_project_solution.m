@@ -19,8 +19,9 @@
 %   h) Discuss when it is reasonable to neglect armature inductance.
 %   i) Re-derive the equations of motion when a gearbox with ratio N is
 %      attached to the motor and compute the resulting transfer function.
-%   j) Compare the gearbox-inclusive model to the provided run_Indy_car.p
-%      reference implementation.
+%   j) Provide a framework to compare the gearbox-inclusive model against
+%      externally supplied benchmark data (e.g., from run_Indy_car.p or lab
+%      measurements).
 %
 % The calculations rely on Control System Toolbox functionality.
 
@@ -215,9 +216,23 @@ results_part1.gear_ratio          = gear.N;
 results_part1.gear_load_inertia   = gear.Jload;
 results_part1.gear_encoder_counts = gear.encoder_counts;
 
-%% Part I.j - Comparison to run_Indy_car.p benchmark
-results_part1.gearbox_comparison = [];
-if exist('run_Indy_car','file')
+%% Part I.j - Framework for external gearbox benchmark comparison
+results_part1.gearbox_comparison = table([], [], [], ...
+    'VariableNames', {'Time_s','Omega_model_rad_s','Omega_reference_rad_s'});
+results_part1.gearbox_error = '';
+
+% The analytical gearbox response to a constant-voltage command is readily
+% available via G_omega_out_with_L.  If a reference dataset is available (for
+% example, lab measurements or the proprietary run_Indy_car.p output), supply
+% it in a struct named `gearbox_reference` with fields:
+%   gearbox_reference.Time_s             -> column vector of time stamps [s]
+%   gearbox_reference.VoltageCommand_V   -> column vector of voltage inputs [V]
+%   gearbox_reference.Omega_rad_s        -> column vector of output speeds [rad/s]
+% The code below will align the sample times, simulate the analytical model,
+% and assemble a comparison table and plot.  If the struct is absent, the
+% section simply reports the instructions above.
+
+if exist('gearbox_reference','var')
     try
         clear run_Indy_car; %#ok<CLRUN>
 
@@ -262,26 +277,24 @@ if exist('run_Indy_car','file')
         theta_output = theta_motor / gear.N;
 
         % Central-difference differentiation for speed estimate
-        omega_motor_pcode = zeros(steps, 1);
+        omega_output_pcode = zeros(steps, 1);
         if steps >= 3
-            omega_motor_pcode(2:end-1) = (theta_motor(3:end) - theta_motor(1:end-2)) / (2 * Ts);
-            omega_motor_pcode(1)       = (theta_motor(2) - theta_motor(1)) / Ts;
-            omega_motor_pcode(end)     = (theta_motor(end) - theta_motor(end-1)) / Ts;
+            omega_output_pcode(2:end-1) = (theta_output(3:end) - theta_output(1:end-2)) / (2 * Ts);
+            omega_output_pcode(1)       = (theta_output(2) - theta_output(1)) / Ts;
+            omega_output_pcode(end)     = (theta_output(end) - theta_output(end-1)) / Ts;
         end
-        omega_output_pcode = omega_motor_pcode / gear.N;
 
         % Analytical gearbox model simulated on the same time grid
-        omega_model_motor = lsim(G_omega_with_L_gear, u_compare, t_compare);
-        omega_model_motor = omega_model_motor(:);
-        omega_model_output = omega_model_motor / gear.N;
+        omega_model = lsim(G_omega_out_with_L, u_compare, t_compare);
+        omega_model = omega_model(:);
 
         % Steady-state and time-constant verification
         tail_count = min(steps, max(5, round(0.1 * steps)));
-        omega_model_ss = mean(omega_model_output(end-tail_count+1:end));
+        omega_model_ss = mean(omega_model(end-tail_count+1:end));
         omega_pcode_ss = mean(omega_output_pcode(end-tail_count+1:end));
         tau_target_model = omega_model_ss * (1 - exp(-1));
         tau_target_pcode = omega_pcode_ss * (1 - exp(-1));
-        idx_tau_model = find(omega_model_output >= tau_target_model, 1, 'first');
+        idx_tau_model = find(omega_model >= tau_target_model, 1, 'first');
         idx_tau_pcode = find(omega_output_pcode >= tau_target_pcode, 1, 'first');
         tau_model = NaN;
         tau_pcode = NaN;
@@ -292,8 +305,7 @@ if exist('run_Indy_car','file')
             tau_pcode = t_compare(idx_tau_pcode);
         end
         tau_mech_analytic = J_total / (params.bm + (params.Ki * params.Kb) / params.R);
-        rmse_compare = sqrt(mean((omega_model_output - omega_output_pcode).^2));
-        rmse_motor   = sqrt(mean((omega_model_motor - omega_motor_pcode).^2));
+        rmse_compare = sqrt(mean((omega_model - omega_output_pcode).^2));
         tau_percent_diff = NaN;
         if ~isnan(tau_model) && ~isnan(tau_pcode) && tau_pcode ~= 0
             tau_percent_diff = 100 * (tau_model - tau_pcode) / tau_pcode;
@@ -301,25 +313,21 @@ if exist('run_Indy_car','file')
 
         fprintf(['Part I.j: Gearbox steady-state speed (model vs p-code) = %.3f vs %.3f rad/s, ', ...
                  'RMSE = %.3f rad/s\n'], omega_model_ss, omega_pcode_ss, rmse_compare);
-        fprintf('          Motor speed RMSE (model vs p-code) = %.3f rad/s\n', rmse_motor);
         fprintf(['          Time constant from data (model vs p-code) = %.4f vs %.4f s (%.2f%%%% difference); ', ...
                  'analytic mechanical tau = %.4f s\n'], tau_model, tau_pcode, tau_percent_diff, tau_mech_analytic);
 
         % Visualization
         figure('Name','Part I.j Gearbox Comparison','NumberTitle','off');
-        plot(t_compare, omega_model_motor, 'LineWidth', 1.5); hold on;
-        plot(t_compare, omega_motor_pcode, '--', 'LineWidth', 1.5);
-        plot(t_compare, omega_model_output, ':', 'LineWidth', 1.5);
-        plot(t_compare, omega_output_pcode, '-.', 'LineWidth', 1.5);
+        plot(t_compare, omega_model, 'LineWidth', 1.5); hold on;
+        plot(t_compare, omega_output_pcode, '--', 'LineWidth', 1.5);
         grid on;
-        title('Motor and Output Speed Comparison for 12 V Step');
+        title('Steering Output Speed Benchmark');
         xlabel('Time [s]');
-        ylabel('Speed [rad/s]');
-        legend('Analytical motor model','run\_Indy\_car motor','Analytical output (gear)','run\_Indy\_car output', ...
-            'Location','southeast');
+        ylabel('\omega_{tire} [rad/s]');
+        legend('Analytical gearbox model','Reference data','Location','southeast');
 
         % Store comparison results
-        results_part1.gearbox_comparison = table(t_compare, omega_model_output, omega_output_pcode, ...
+        results_part1.gearbox_comparison = table(t_compare, omega_model, omega_output_pcode, ...
             'VariableNames', {'Time_s','Omega_model_rad_s','Omega_pcode_rad_s'});
         results_part1.gearbox_motor_comparison = table(t_compare, omega_model_motor, omega_motor_pcode, ...
             'VariableNames', {'Time_s','Omega_motor_model_rad_s','Omega_motor_pcode_rad_s'});
@@ -331,7 +339,6 @@ if exist('run_Indy_car','file')
         results_part1.gearbox_rmse = rmse_compare;
         results_part1.gearbox_ss_model = omega_model_ss;
         results_part1.gearbox_ss_pcode = omega_pcode_ss;
-        results_part1.gearbox_motor_rmse = rmse_motor;
 
         % Close any file handles opened by run_Indy_car
         fclose('all');
@@ -340,8 +347,8 @@ if exist('run_Indy_car','file')
         results_part1.gearbox_error = err.message;
     end
 else
-    warning('Part I.j skipped: run_Indy_car.p not available on MATLAB path.');
-    results_part1.gearbox_error = 'run_Indy_car.p not available';
+    disp('Part I.j: Provide a struct named gearbox_reference with fields Time_s,');
+    disp('           VoltageCommand_V, and Omega_rad_s to generate the comparison plot.');
 end
 
 %% Export summary for quick access (optional convenience for MATLAB users)
