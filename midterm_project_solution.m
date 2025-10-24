@@ -329,6 +329,8 @@ if exist('gearbox_reference','var')
         % Store comparison results
         results_part1.gearbox_comparison = table(t_compare, omega_model, omega_output_pcode, ...
             'VariableNames', {'Time_s','Omega_model_rad_s','Omega_pcode_rad_s'});
+        results_part1.gearbox_motor_comparison = table(t_compare, omega_model_motor, omega_motor_pcode, ...
+            'VariableNames', {'Time_s','Omega_motor_model_rad_s','Omega_motor_pcode_rad_s'});
         results_part1.gearbox_error = '';
         results_part1.gearbox_tau_model = tau_model;
         results_part1.gearbox_tau_pcode = tau_pcode;
