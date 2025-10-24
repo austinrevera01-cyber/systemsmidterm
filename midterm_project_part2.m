@@ -1,226 +1,235 @@
-clear; close all; clc;
+%% Midterm Project Part II - Steering Motor Analysis and Simulation
+% This script consolidates the controller design and validation tasks for
+% Part II of the midterm project.  It reuses a common set of motor and gear
+% parameters to:
+%   * derive the closed-loop position dynamics and PD controller (Part II.a/b),
+%   * evaluate sinusoidal tracking and frequency response of the design,
+%   * exercise the discrete-time integral controller against the encrypted
+%     ``run_Indy_car`` plant (Part II.c), and
+%   * simulate the vehicle response to a constant steering command (Part II.d).
+%
+% The code is organized so that shared parameters are defined once and passed
+% into helper functions.  Each section reports key metrics while generating the
+% figures required for the write-up.  The Control System Toolbox is assumed to
+% be available for transfer-function manipulation.
 
-params = motorGearParameters();
+close all; clearvars; clc;
 
-%% Part II.a/b: Continuous-time PD design and frequency analysis
-pdResults = designPdController(params);
+params = motorParameters();
+gear   = gearboxParameters();
+inertia = reflectedInertia(params, gear);
+specs   = designSpecifications();
 
-%% Part II.c: Integral controller evaluation with run_Indy_car.p
-integralResults = evaluateIntegralController(params);
+%% Part II.a/b - Continuous-Time PD Controller Design and Validation
+pdResults = designPdPositionController(params, inertia, specs);
 
-%% Part II.d: Vehicle-state simulation for constant 12 V command
-vehicleResults = simulateVehicleStates(params);
+fprintf('\nPart II.a/b Summary:\n');
+fprintf('  Damping ratio (zeta)        : %.4f\n', specs.zeta);
+fprintf('  Natural frequency (wn)      : %.1f rad/s\n', specs.wn);
+fprintf('  Closed-loop bandwidth       : %.1f rad/s (%.1f Hz)\n', ...
+    specs.bandwidth_rad, specs.bandwidth_rad/(2*pi));
+fprintf('  PD gains                    : Kp = %.2f, Kd = %.5f\n', ...
+    pdResults.Kp, pdResults.Kd);
+fprintf('  Step response overshoot     : %.2f%%%%\n', pdResults.stepInfo.Overshoot);
+fprintf('  Step response Ts (2%%%% band): %.4f s\n', pdResults.stepInfo.SettlingTime);
 
-assignin('base', 'midterm_part2_pd', pdResults);
-assignin('base', 'midterm_part2_integral', integralResults);
-assignin('base', 'midterm_part2_vehicle', vehicleResults);
+%% Part II.c - Integral Controller Bench Test with run_Indy_car
+integralResults = runIntegralController(params, gear, inertia, specs);
 
-fprintf('\nMidterm project Part II scripts finished. Results exported to workspace.\n');
+fprintf('\nPart II.c Summary:\n');
+fprintf('  Integral gain (continuous)  : %.2f\n', integralResults.Ki_I);
+fprintf('  Measured overshoot          : %.2f%%%%\n', integralResults.overshoot_pct);
+fprintf('  Measured Ts (2%%%% band)     : %.4f s\n', integralResults.settling_time);
+fprintf('  Steady-state error          : %.4f deg\n', integralResults.ss_error_deg);
 
-%% ===== Local functions ==================================================
-function params = motorGearParameters()
-params.R  = 0.611;          % Armature resistance [Ohm]
-params.L  = 0.000119;       % Armature inductance [H]
-params.Ki = 0.0259;         % Torque constant [N*m/A]
-params.Kb = 0.025879;       % Back-EMF constant [V*s/rad]
-params.Jm = 3.35e-6;        % Rotor inertia [kg*m^2]
+%% Part II.d - Vehicle Output State Simulation
+vehicleResults = runVehicleStateSimulation(gear);
 
-params.gearRatio        = 21;        % Motor:output ratio (GP32 21:1)
-params.gearInertiaOut   = 0.8e-7;    % Gear inertia at output [kg*m^2]
-params.encoderCounts    = 500 * 4;   % Quadrature counts per motor revolution
-params.maxEncoderCount  = 4096;      % Encoder rollover count (12-bit)
-params.steeringRatio    = 15;        % Motor:tire steering ratio
-params.tireAngleLimit   = deg2rad(20); % Tire angle saturation [rad]
+fprintf('\nPart II.d Summary:\n');
+fprintf('  Steady-state tire angle     : %.2f deg\n', vehicleResults.delta_ss_deg);
+fprintf('  Steady-state yaw rate       : %.4f rad/s\n', vehicleResults.yaw_ss);
+fprintf('  Avg. heading (final 10%%%%)  : %.2f deg\n', vehicleResults.psi_ss_deg);
 
-params.JgearRef = params.gearInertiaOut / params.gearRatio^2;
-params.Jload    = params.Jm + params.JgearRef;     % Inertia at motor shaft
-params.Joutput  = params.Jload * params.gearRatio^2; % Inertia reflected to output
+%% ------------------------------------------------------------------------
+%% Local helper functions
+function params = motorParameters()
+%MOTORPARAMETERS Returns electrical and mechanical motor constants.
+params.R  = 0.611;        % Armature resistance [Ohm]
+params.L  = 0.000119;     % Armature inductance [H]
+params.Ki = 0.0259;       % Torque constant [N*m/A]
+params.Kb = 0.025879;     % Back-EMF constant [V*s/rad]
+params.Jm = 3.35e-6;      % Motor rotor inertia [kg*m^2]
 end
 
-function results = designPdController(params)
-R = params.R;
-L = params.L;
-Ki = params.Ki;
-Kb = params.Kb;
-J = params.Jload;
+function gear = gearboxParameters()
+%GEARBOXPARAMETERS Returns gearbox geometry and limits.
+gear.N        = 21;        % Gear ratio (motor:output)
+gear.Jg_out   = 0.8e-7;    % Gear inertia at output [kg*m^2]
+gear.encoder_cpr = 500 * 4; % Quadrature counts per motor revolution
+gear.steer_ratio = 15;     % Overall steering ratio (wheel:tire)
+gear.delta_max  = deg2rad(20); % Physical tire angle limit [rad]
+end
 
+function inertia = reflectedInertia(params, gear)
+%REFLECTEDINERTIA Computes inertia at the motor and output shafts.
+Jg_ref = gear.Jg_out / gear.N^2; % Reflected gear inertia at motor shaft
+inertia.motor  = params.Jm + Jg_ref;  % Total inertia referred to motor side
+inertia.output = inertia.motor * gear.N^2; % Equivalent inertia at output
+end
+
+function specs = designSpecifications()
+%DESIGNSPECIFICATIONS Computes desired damping and bandwidth targets.
+desired_overshoot = 0.05; % 5% overshoot target
+specs.zeta = sqrt((log(desired_overshoot)^2) / ...
+                  (pi^2 + log(desired_overshoot)^2));
+specs.Ts = 0.025;         % Settling time requirement (< 25 ms)
+specs.wn = 4 / (specs.zeta * specs.Ts); % 2% settling-time heuristic
+specs.bandwidth_rad = specs.wn * sqrt(1 - 2*specs.zeta^2 + ...
+    sqrt(2 + 4*specs.zeta^4));
+end
+
+function results = designPdPositionController(params, inertia, specs)
+%DESIGNPDPOSITIONCONTROLLER Designs and evaluates the PD controller.
 s = tf('s');
-P_motor = Ki / ((J * s) * (L * s + R) + Ki * Kb);
-P_theta = P_motor / s;
+P_motor = params.Ki / ((inertia.motor * s) * (params.L * s + params.R) ...
+    + params.Ki * params.Kb); % omega(s)/V(s)
+P_theta = P_motor / s;        % theta(s)/V(s)
 
-fprintf('\nMotor angular position transfer function (theta/V):\n');
-disp(P_theta);
+J_out = inertia.output;
+results.Kp = (specs.wn^2 * J_out) / params.Ki;
+results.Kd = (2 * specs.zeta * specs.wn * J_out - ...
+    (params.Kb * params.Ki) / params.R) / params.Ki;
 
-% Design targets: 5%% overshoot, Ts < 25 ms
-zeta = sqrt(log(0.05)^2 / (pi^2 + log(0.05)^2));
-Ts   = 0.025;
-wn   = 4 / (zeta * Ts);
+C = results.Kp + results.Kd * s;
+results.T_closed = feedback(C * P_theta, 1);
+results.stepInfo = stepinfo(results.T_closed);
 
-fprintf('Target damping ratio  zeta = %.4f\n', zeta);
-fprintf('Target natural freq. wn   = %.1f rad/s\n', wn);
-
-wbw = wn * sqrt(1 - 2 * zeta^2 + sqrt(2 + 4 * zeta^4));
-fprintf('Closed-loop bandwidth ≈ %.1f rad/s (%.1f Hz)\n', wbw, wbw / (2 * pi));
-
-Kp = (wn^2 * params.Joutput) / Ki;
-Kd = (2 * zeta * wn * params.Joutput - (Kb * Ki) / R) / Ki;
-fprintf('PD gains: Kp = %.2f, Kd = %.5f\n', Kp, Kd);
-
-C = Kp + Kd * s;
-T_closed = feedback(C * P_theta, 1);
-info = stepinfo(T_closed);
-fprintf('Closed-loop overshoot  = %.2f%%%%\n', info.Overshoot);
-fprintf('Closed-loop Ts (2%%%%) = %.4f s\n', info.SettlingTime);
-
-figure('Name', 'Part II.a PD Step Response', 'NumberTitle', 'off');
-step(T_closed);
+% Step response plot
+figure('Name','Part II.a - Step Response','NumberTitle','off');
+step(results.T_closed);
 title('Closed-loop Step Response (Position)');
 ylabel('Angular Position [rad]');
 grid on;
 
-f_ref = 10;
-t = (0:1e-5:0.2).';
-ref = 0.1 * sin(2 * pi * f_ref * t);
-y = lsim(T_closed, ref, t);
+% Sinusoidal tracking
+f_ref = 10;                     % 10 Hz reference (within bandwidth)
+t = (0:1e-5:0.2).';             % Column vector time base
+ref = 0.1 * sin(2*pi*f_ref*t);  % 0.1 rad amplitude
+tracking = lsim(results.T_closed, ref, t);
 
-figure('Name', 'Part II.b Sinusoidal Tracking', 'NumberTitle', 'off');
+figure('Name','Part II.b - Sinusoidal Tracking','NumberTitle','off');
 plot(t, ref, 'r--', 'LineWidth', 1.3); hold on;
-plot(t, y, 'b', 'LineWidth', 1.4);
-legend('Reference', 'Output', 'Location', 'southeast');
+plot(t, tracking, 'b', 'LineWidth', 1.4);
+legend('Reference','Output','Location','best');
 title(sprintf('Sinusoidal Tracking (%.1f Hz)', f_ref));
 xlabel('Time [s]');
 ylabel('Angular Position [rad]');
 grid on;
 
-figure('Name', 'Part II.b Closed-loop Bode', 'NumberTitle', 'off');
-bode(T_closed);
+% Frequency response
+figure('Name','Part II.b - Closed-loop Bode','NumberTitle','off');
+bode(results.T_closed);
 grid on;
-title('Bode Plot of Closed-loop Position System');
-
-results.transferFcn = P_theta;
-results.controller  = C;
-results.closedLoop  = T_closed;
-results.stepInfo    = info;
-results.zeta        = zeta;
-results.wn          = wn;
-results.bandwidth   = wbw;
-results.Kp          = Kp;
-results.Kd          = Kd;
-results.sinusoid.t  = t;
-results.sinusoid.ref = ref;
-results.sinusoid.y   = y;
 end
 
-function results = evaluateIntegralController(params)
+function results = runIntegralController(params, gear, inertia, specs)
+%RUNINTEGRALCONTROLLER Discrete I-only controller on run_Indy_car.
+Ki_I = (inertia.motor * params.L / params.Ki) * specs.wn^4;
+
+% Discrete-time setup enforced by the p-code interface
 resetRunIndyCar();
-
-zeta = sqrt(log(0.05)^2 / (pi^2 + log(0.05)^2));
-Ts = 0.025;
-wn = 4 / (zeta * Ts);
-Ki_I = (params.Jload * params.L / params.Ki) * wn^4;
-fprintf('\nPart II.c integral gain (continuous-time): Ki_I = %.2f\n', Ki_I);
-
-results.KiIntegral = Ki_I;
-
-if ~exist('run_Indy_car', 'file')
-    warning('run_Indy_car.p not found on path. Skipping Part II.c simulation.');
-    results.status = 'run_Indy_car.p unavailable';
-    return;
-end
-
-% Discrete-time setup
-results.status = 'Simulation executed';
-dt = 0.001;
-t_end = 10;
+dt    = 0.001;        % Sample time [s]
+t_end = 10;           % Simulation horizon [s]
 steps = round(t_end / dt);
-t = (0:steps-1).' * dt;
-Vmax = 24;
-counts2rad = 2 * pi / params.encoderCounts;
-theta_ref_deg = 30;
-theta_ref = deg2rad(theta_ref_deg);
+t     = (0:steps-1).' * dt;
 
-Vel = 0;
-X0 = [0 0 0 0 0];
+Vmax = 24;            % Actuator saturation [V]
+counts2rad = 2 * pi / gear.encoder_cpr;
+
+% Reference trajectory (30 degree steering command at the tire)
+theta_ref = deg2rad(30);
+
+% Initialize p-code with bench-test conditions
+vehicle_speed = 0;
+X0 = zeros(1,5);
 WP_FILE = 0;
-run_Indy_car(0, Vel, X0, WP_FILE);
+[~, ~, ~] = run_Indy_car(0, vehicle_speed, X0, WP_FILE);
 
-acc_counts = 0;
-last_raw = NaN;
-motor_counts = zeros(steps, 1);
-theta_motor = zeros(steps, 1);
-theta_output = zeros(steps, 1);
+% Preallocate logs
+acc_counts    = 0;
+last_raw      = NaN;
+motor_counts  = zeros(steps, 1);
+theta_motor   = zeros(steps, 1);
+theta_output  = zeros(steps, 1);
 control_volts = zeros(steps, 1);
-error_hist = zeros(steps, 1);
-integ_hist = zeros(steps, 1);
 
-err_prev = theta_ref;
+err_prev         = theta_ref;  % initial error (output starts at zero)
 integrator_state = 0;
 
 for k = 1:steps
     tentative_state = integrator_state + err_prev * dt;
-    u_unsat = Ki_I * tentative_state;
-    u = min(max(u_unsat, -Vmax), Vmax);
-    if (u ~= u_unsat) && sign(u_unsat) == sign(err_prev)
+    u_unsat         = Ki_I * tentative_state;
+    u               = saturate(u_unsat, Vmax);
+
+    % Basic anti-windup: freeze integrator when saturated in error direction
+    if (u ~= u_unsat) && sign(err_prev) == sign(u_unsat)
         tentative_state = integrator_state;
-        u = sign(u_unsat) * Vmax;
+        u = saturate(Ki_I * tentative_state, Vmax);
     end
+
     integrator_state = tentative_state;
 
     control_volts(k) = u;
-    error_hist(k) = err_prev;
-    integ_hist(k) = integrator_state;
 
+    % Apply control to the p-code plant
     [~, ~, counts] = run_Indy_car(u);
     raw = double(counts);
 
+    % Handle encoder rollover from the 12-bit counter
     if isnan(last_raw)
         acc_counts = raw;
     else
         delta = raw - last_raw;
-        half_count = params.maxEncoderCount / 2;
-        if delta > half_count
-            delta = delta - params.maxEncoderCount;
-        elseif delta < -half_count
-            delta = delta + params.maxEncoderCount;
-        end
+        if delta >  4096/2, delta = delta - 4096; end
+        if delta < -4096/2, delta = delta + 4096; end
         acc_counts = acc_counts + delta;
     end
     last_raw = raw;
 
     motor_counts(k) = acc_counts;
-    theta_motor(k) = acc_counts * counts2rad;
-    theta_output(k) = theta_motor(k) / params.gearRatio;
+    theta_motor(k)  = acc_counts * counts2rad;
+    theta_output(k) = theta_motor(k) / gear.N;
 
     err_prev = theta_ref - theta_output(k);
 end
 
 theta_output_deg = rad2deg(theta_output);
+
+% Settling time (2% band)
 tol = 0.02 * abs(theta_ref);
 settle_idx = find(abs(theta_output - theta_ref) > tol, 1, 'last');
 if isempty(settle_idx)
-    Ts_measured = 0;
+    settling_time = 0;
 else
-    Ts_measured = t(min(settle_idx + 1, steps));
+    settling_time = t(min(settle_idx + 1, steps));
 end
 
-overshoot_pct = (max(theta_output) - theta_ref) / theta_ref * 100;
-ss_error_rad = theta_ref - mean(theta_output(round(0.9 * steps):end));
-ss_error_deg = rad2deg(ss_error_rad);
+results.Ki_I = Ki_I;
+results.overshoot_pct = (max(theta_output) - theta_ref) / theta_ref * 100;
+results.settling_time = settling_time;
+results.ss_error_deg  = rad2deg(theta_ref - mean(theta_output(round(0.9*steps):end)));
 
-fprintf('Measured overshoot  : %.2f%%%%\n', overshoot_pct);
-fprintf('Measured Ts (2%%%%) : %.4f s\n', Ts_measured);
-fprintf('Steady-state error  : %.4f deg\n', ss_error_deg);
-
-figure('Name', 'Part II.c Steering Response', 'NumberTitle', 'off');
+% Plot response and diagnostics
+figure('Name','Part II.c - Steering Response','NumberTitle','off');
 plot(t, theta_output_deg, 'b', 'LineWidth', 1.5); hold on;
-plot(t, theta_ref_deg * ones(size(t)), 'r--', 'LineWidth', 1.3);
-legend('run\_Indy\_car output', 'Reference', 'Location', 'southeast');
+plot(t, rad2deg(theta_ref) * ones(size(t)), 'r--', 'LineWidth', 1.3);
+legend('run\_Indy\_car output','Reference','Location','southeast');
 xlabel('Time [s]');
 ylabel('Steering Angle [deg]');
 grid on;
-title('Part II.c: Integral Controller vs. run\_Indy\_car.p');
+title('Part II.c: Integral Controller Tracking');
 
-figure('Name', 'Part II.c Control Effort', 'NumberTitle', 'off');
+figure('Name','Part II.c - Control Effort','NumberTitle','off');
 plot(t, control_volts, 'LineWidth', 1.5); hold on;
 yline([Vmax, -Vmax], 'k--', 'LineWidth', 1.0);
 xlabel('Time [s]');
@@ -228,65 +237,51 @@ ylabel('Control Voltage [V]');
 grid on;
 title('Integral Control Effort with Saturation Limits');
 
-figure('Name', 'Part II.c Motor Angle', 'NumberTitle', 'off');
+figure('Name','Part II.c - Motor Angle','NumberTitle','off');
 plot(t, rad2deg(theta_motor), 'LineWidth', 1.5);
 xlabel('Time [s]');
 ylabel('Motor Angle [deg]');
 grid on;
 title('Motor Shaft Angle (run\_Indy\_car)');
 
-results.time = t;
-results.thetaOutputDeg = theta_output_deg;
-results.thetaMotorDeg = rad2deg(theta_motor);
-results.controlVolts = control_volts;
-results.error = error_hist;
-results.integrator = integ_hist;
-results.overshootPercent = overshoot_pct;
-results.settlingTime = Ts_measured;
-results.ssErrorDeg = ss_error_deg;
-
 fclose('all');
 clear run_Indy_car;
 end
 
-function results = simulateVehicleStates(params)
+function results = runVehicleStateSimulation(gear)
+%RUNVEHICLESTATESIMULATION Simulates vehicle response at 10 m/s.
 resetRunIndyCar();
 
-if ~exist('run_Indy_car', 'file')
-    warning('run_Indy_car.p not found on path. Skipping Part II.d simulation.');
-    results.status = 'run_Indy_car.p unavailable';
-    return;
-end
+V_cmd       = 12;          % Constant motor command [V]
+vehicle_vel = 10;          % Forward speed [m/s]
+dt          = 0.001;       % Time step [s]
+t_final     = 5;           % Simulation length [s]
 
-V_cmd = 12;
-vehicle_vel = 10;
-dt = 0.001;
-t_final = 5;
 num_steps = round(t_final / dt);
-time_vec = (0:num_steps-1).' * dt;
+time_vec  = (0:num_steps-1)' * dt;
 
-X0 = [0 0 0 0 0];
+X0 = zeros(1,5);
 WP_FILE = 0;
-run_Indy_car(0, vehicle_vel, X0, WP_FILE);
+[~, ~, ~] = run_Indy_car(0, vehicle_vel, X0, WP_FILE);
 
 motor_counts = zeros(num_steps, 1);
-yaw_rate = zeros(num_steps, 1);
-heading = zeros(num_steps, 1);
+yaw_rate     = zeros(num_steps, 1);
+heading      = zeros(num_steps, 1);
 
 for k = 1:num_steps
     [gps, yaw_k, counts_k] = run_Indy_car(V_cmd); %#ok<ASGLU>
     motor_counts(k) = double(counts_k);
-    yaw_rate(k) = yaw_k;
-    heading(k) = gps(3);
+    yaw_rate(k)     = yaw_k;
+    heading(k)      = gps(3);
 end
 
-motor_angle = unwrap(motor_counts * (2 * pi / params.encoderCounts));
-delta_tire = motor_angle / params.steeringRatio;
-delta_tire = min(max(delta_tire, -params.tireAngleLimit), params.tireAngleLimit);
+motor_angle = unwrap(motor_counts * (2 * pi / gear.encoder_cpr));
+delta_tire = motor_angle / gear.steer_ratio;
+delta_tire = min(max(delta_tire, -gear.delta_max), gear.delta_max);
 
-yaw_rate = filter(ones(5,1) / 5, 1, yaw_rate);
+yaw_rate = filter(ones(5,1)/5, 1, yaw_rate);
 
-figure('Name', 'Part II.d Vehicle Output States', 'NumberTitle', 'off');
+figure('Name','Part II.d - Vehicle Output States','NumberTitle','off');
 subplot(3,1,1);
 plot(time_vec, rad2deg(delta_tire), 'LineWidth', 1.5);
 ylabel('\delta_{tire} [deg]');
@@ -307,30 +302,21 @@ ylabel('\psi [deg]');
 grid on;
 xlim([0, 5]);
 
-delta_ss = mean(delta_tire(round(0.9 * num_steps):end));
-yaw_ss = mean(yaw_rate(round(0.9 * num_steps):end));
-psi_ss = mean(heading(round(0.9 * num_steps):end));
-
-fprintf('\nPart II.d steady-state tire steer angle: %.2f deg\n', rad2deg(delta_ss));
-fprintf('Part II.d steady-state yaw rate: %.4f rad/s\n', yaw_ss);
-fprintf('Part II.d average heading over final 10%%%%: %.2f deg\n', rad2deg(psi_ss));
-
-results.status = 'Simulation executed';
-results.time = time_vec;
-results.deltaTireDeg = rad2deg(delta_tire);
-results.yawRate = yaw_rate;
-results.headingDeg = rad2deg(heading);
-results.steadyState = struct( ...
-    'delta_deg', rad2deg(delta_ss), ...
-    'yaw_rate', yaw_ss, ...
-    'heading_deg', rad2deg(psi_ss));
+steady_idx = round(0.9 * num_steps):num_steps;
+results.delta_ss_deg = mean(rad2deg(delta_tire(steady_idx)));
+results.yaw_ss       = mean(yaw_rate(steady_idx));
+results.psi_ss_deg   = mean(rad2deg(heading(steady_idx)));
 
 fclose('all');
 clear run_Indy_car;
 end
 
 function resetRunIndyCar()
-if exist('run_Indy_car', 'file')
-    clear run_Indy_car;
+%RESETRUNINDYCAR Clears the persistent state in the p-code interface.
+clear run_Indy_car;
 end
+
+function val = saturate(u, limit)
+%SATURATE Clips the input u to the symmetric range [-limit, limit].
+val = min(max(u, -limit), limit);
 end
