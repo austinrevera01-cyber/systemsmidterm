@@ -4,7 +4,7 @@
 % parameters to:
 %   * derive the closed-loop position dynamics and PD controller (Part II.a/b),
 %   * evaluate sinusoidal tracking and frequency response of the design,
-%   * exercise the discrete-time integral controller against the encrypted
+%   * exercise the discrete-time PI controller against the encrypted
 %     ``run_Indy_car`` plant (Part II.c), and
 %   * simulate the vehicle response to a constant steering command (Part II.d).
 %
@@ -33,14 +33,15 @@ fprintf('  PD gains                    : Kp = %.2f, Kd = %.5f\n', ...
 fprintf('  Step response overshoot     : %.2f%%%%\n', pdResults.stepInfo.Overshoot);
 fprintf('  Step response Ts (2%%%% band): %.4f s\n', pdResults.stepInfo.SettlingTime);
 
-%% Part II.c - Integral Controller Bench Test with run_Indy_car
-integralResults = runIntegralController(params, gear, inertia, specs);
+%% Part II.c - PI Controller Bench Test with run_Indy_car
+piResults = runPiController(params, gear, inertia, specs);
 
 fprintf('\nPart II.c Summary:\n');
-fprintf('  Integral gain (continuous)  : %.2f\n', integralResults.Ki_I);
-fprintf('  Measured overshoot          : %.2f%%%%\n', integralResults.overshoot_pct);
-fprintf('  Measured Ts (2%%%% band)     : %.4f s\n', integralResults.settling_time);
-fprintf('  Steady-state error          : %.4f deg\n', integralResults.ss_error_deg);
+fprintf('  PI gains (continuous)       : Kp = %.2f, Ki = %.2f\n', ...
+    piResults.Kp_PI, piResults.Ki_PI);
+fprintf('  Measured overshoot          : %.2f%%%%\n', piResults.overshoot_pct);
+fprintf('  Measured Ts (2%%%% band)     : %.4f s\n', piResults.settling_time);
+fprintf('  Steady-state error          : %.4f deg\n', piResults.ss_error_deg);
 
 %% Part II.d - Vehicle Output State Simulation
 vehicleResults = runVehicleStateSimulation(gear);
@@ -132,9 +133,17 @@ bode(results.T_closed);
 grid on;
 end
 
-function results = runIntegralController(params, gear, inertia, specs)
-%RUNINTEGRALCONTROLLER Discrete I-only controller on run_Indy_car.
-Ki_I = (inertia.motor * params.L / params.Ki) * specs.wn^4;
+function results = runPiController(params, gear, inertia, specs)
+%RUNPICONTROLLER Discrete PI controller on run_Indy_car.
+
+% Continuous-time gains obtained by matching the s and constant terms of
+% the desired (s^2 + 2*zeta*wn*s + wn^2)^2 characteristic polynomial to the
+% motor + inductance dynamics referenced to the steering output.  The extra
+% factor of gear.N accounts for commanding the tire angle instead of the
+% motor shaft angle.
+gain_scale = inertia.motor * params.L * gear.N / params.Ki;
+Kp_cont = gain_scale * (4 * specs.zeta * specs.wn^3);
+Ki_cont = gain_scale * (specs.wn^4);
 
 % Discrete-time setup enforced by the p-code interface
 resetRunIndyCar();
@@ -162,6 +171,7 @@ motor_counts  = zeros(steps, 1);
 theta_motor   = zeros(steps, 1);
 theta_output  = zeros(steps, 1);
 control_volts = zeros(steps, 1);
+prop_hist     = zeros(steps, 1);
 error_hist    = zeros(steps, 1);
 integ_hist    = zeros(steps, 1);
 
@@ -171,15 +181,17 @@ theta_output_prev  = 0;
 for k = 1:steps
     err_k = theta_ref - theta_output_prev;
     tentative_state = integrator_state + err_k * dt;
-    u_unsat = Ki_I * tentative_state;
+    prop_term = Kp_cont * err_k;
+    u_unsat = prop_term + Ki_cont * tentative_state;
     u = saturate(u_unsat, Vmax);
 
-    % Only advance the integrator when not wound up in the saturation direction
-    if (abs(u_unsat) <= Vmax) || (sign(u_unsat) ~= sign(err_k))
+    sat_active = abs(u_unsat - u) > 1e-9;
+    if ~sat_active || sign(err_k) ~= sign(u)
         integrator_state = tentative_state;
     end
 
     control_volts(k) = u;
+    prop_hist(k)     = prop_term;
     error_hist(k)    = err_k;
     integ_hist(k)    = integrator_state;
 
@@ -215,13 +227,15 @@ else
     settling_time = t(min(settle_idx + 1, steps));
 end
 
-results.Ki_I = Ki_I;
+results.Kp_PI = Kp_cont;
+results.Ki_PI = Ki_cont;
 results.overshoot_pct = (max(theta_output) - theta_ref) / theta_ref * 100;
 results.settling_time = settling_time;
 results.ss_error_deg  = rad2deg(theta_ref - mean(theta_output(round(0.9*steps):end)));
 results.time          = t;
 results.theta_output_deg = theta_output_deg;
 results.control_volts = control_volts;
+results.prop_history  = prop_hist;
 results.error_history = error_hist;
 results.integrator_state = integ_hist;
 
@@ -233,7 +247,7 @@ legend('run\_Indy\_car output','Reference','Location','southeast');
 xlabel('Time [s]');
 ylabel('Steering Angle [deg]');
 grid on;
-title('Part II.c: Integral Controller Tracking');
+title('Part II.c: PI Controller Tracking');
 
 figure('Name','Part II.c - Control Effort','NumberTitle','off');
 plot(t, control_volts, 'LineWidth', 1.5); hold on;
@@ -241,7 +255,7 @@ yline([Vmax, -Vmax], 'k--', 'LineWidth', 1.0);
 xlabel('Time [s]');
 ylabel('Control Voltage [V]');
 grid on;
-title('Integral Control Effort with Saturation Limits');
+title('PI Control Effort with Saturation Limits');
 
 figure('Name','Part II.c - Motor Angle','NumberTitle','off');
 plot(t, rad2deg(theta_motor), 'LineWidth', 1.5);
