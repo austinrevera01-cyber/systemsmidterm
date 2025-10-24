@@ -216,179 +216,21 @@ results_part1.gear_ratio          = gear.N;
 results_part1.gear_load_inertia   = gear.Jload;
 results_part1.gear_encoder_counts = gear.encoder_counts;
 
-%% Part I.j - Compare gearbox-inclusive model against run\_Indy\_car.p benchmark
-results_part1.gearbox_error = '';
+%% Part I.j - Benchmark comparison placeholder
+% The original project specification requests a comparison between the
+% analytical gearbox model derived above and benchmark data gathered from
+% either laboratory measurements or the provided IndyCar demonstration
+% scripts.  All logic associated with executing the encrypted
+% run_Indy_car.p file has been intentionally removed to provide a clean
+% starting point for future work.  Populate the results structure below
+% after importing your chosen dataset so that downstream analysis can
+% continue to use the same interface.
+
 results_part1.gearbox_comparison = table([], [], [], ...
-    'VariableNames', {'Time_s','Omega_model_rad_s','Omega_pcode_rad_s'});
+    'VariableNames', {'Time_s','Omega_model_rad_s','Omega_data_rad_s'});
 results_part1.gearbox_motor_comparison = table([], [], [], ...
-    'VariableNames', {'Time_s','Omega_motor_model_rad_s','Omega_motor_pcode_rad_s'});
-
-pcode_available = ~isempty(which('run_Indy_car.p')) || exist('run_Indy_car','file');
-
-if pcode_available
-    try
-        clear run_Indy_car; %#ok<CLRUN> Reset persistent state inside the p-code
-
-        % Replicate the acquisition strategy from run_Indy_car_12V_demo.m
-        V_step  = params.Vs;
-        Ts      = 1e-3;        % Sample time enforced by the p-code interface
-        T_final = 0.5;         % Capture both transient and steady-state regions
-        CPR     = gear.encoder_counts; % Quadrature counts per motor revolution
-        MAXCNT  = 4096;        % Encoder rollover value from the demo script
-
-        steps     = round(T_final / Ts);
-        t_compare = (0:steps-1).' * Ts;
-        u_compare = V_step * ones(size(t_compare));
-
-        % Initialize the p-code persistent state
-        Vel       = 0;
-        X0_values = [0 0 0 0 0];
-        WP_FILE   = 0;
-        [~, ~, ~] = run_Indy_car(0, Vel, X0_values, WP_FILE);
-
-        % Collect encoder counts with rollover protection
-        acc_counts   = 0;
-        last_raw     = NaN;
-        theta_counts = zeros(steps, 1);
-        for k = 1:steps
-            [~, ~, counts_k] = run_Indy_car(V_step);
-            raw = double(counts_k);
-            if isnan(last_raw)
-                acc_counts = raw;
-            else
-                d = raw - last_raw;
-                if d >  MAXCNT / 2, d = d - MAXCNT; end
-                if d < -MAXCNT / 2, d = d + MAXCNT; end
-                acc_counts = acc_counts + d;
-            end
-            last_raw = raw;
-            theta_counts(k) = acc_counts;
-        end
-
-        % Convert counts to angles and unwrap
-        theta_motor  = unwrap(theta_counts * (2*pi / CPR));
-        theta_output = theta_motor / gear.N;
-
-        % Differentiate to obtain motor and output speeds
-        omega_motor_pcode = zeros(steps, 1);
-        omega_output_pcode = zeros(steps, 1);
-        if steps >= 3
-            omega_motor_pcode(2:end-1) = (theta_motor(3:end) - theta_motor(1:end-2)) / (2 * Ts);
-            omega_motor_pcode(1)       = (theta_motor(2) - theta_motor(1)) / Ts;
-            omega_motor_pcode(end)     = (theta_motor(end) - theta_motor(end-1)) / Ts;
-
-            omega_output_pcode(2:end-1) = (theta_output(3:end) - theta_output(1:end-2)) / (2 * Ts);
-            omega_output_pcode(1)       = (theta_output(2) - theta_output(1)) / Ts;
-            omega_output_pcode(end)     = (theta_output(end) - theta_output(end-1)) / Ts;
-        end
-
-        % Analytical gearbox model simulated on the same time grid
-        omega_motor_model  = lsim(G_omega_with_L_gear, u_compare, t_compare);
-        omega_output_model = lsim(G_omega_out_with_L, u_compare, t_compare);
-        omega_motor_model  = omega_motor_model(:);
-        omega_output_model = omega_output_model(:);
-
-        % Steady-state and time-constant verification
-        tail_count = min(steps, max(5, round(0.1 * steps)));
-        omega_motor_model_ss  = mean(omega_motor_model(end-tail_count+1:end));
-        omega_motor_pcode_ss  = mean(omega_motor_pcode(end-tail_count+1:end));
-        omega_output_model_ss = mean(omega_output_model(end-tail_count+1:end));
-        omega_output_pcode_ss = mean(omega_output_pcode(end-tail_count+1:end));
-
-        tau_target_motor_model  = omega_motor_model_ss * (1 - exp(-1));
-        tau_target_motor_pcode  = omega_motor_pcode_ss * (1 - exp(-1));
-        tau_target_out_model    = omega_output_model_ss * (1 - exp(-1));
-        tau_target_out_pcode    = omega_output_pcode_ss * (1 - exp(-1));
-
-        idx_tau_motor_model = find(omega_motor_model >= tau_target_motor_model, 1, 'first');
-        idx_tau_motor_pcode = find(omega_motor_pcode >= tau_target_motor_pcode, 1, 'first');
-        idx_tau_out_model   = find(omega_output_model >= tau_target_out_model, 1, 'first');
-        idx_tau_out_pcode   = find(omega_output_pcode >= tau_target_out_pcode, 1, 'first');
-
-        tau_motor_model = NaN;
-        tau_motor_pcode = NaN;
-        tau_out_model   = NaN;
-        tau_out_pcode   = NaN;
-        if ~isempty(idx_tau_motor_model), tau_motor_model = t_compare(idx_tau_motor_model); end
-        if ~isempty(idx_tau_motor_pcode), tau_motor_pcode = t_compare(idx_tau_motor_pcode); end
-        if ~isempty(idx_tau_out_model),   tau_out_model   = t_compare(idx_tau_out_model);   end
-        if ~isempty(idx_tau_out_pcode),   tau_out_pcode   = t_compare(idx_tau_out_pcode);   end
-
-        tau_mech_analytic = J_total / (params.bm + (params.Ki * params.Kb) / params.R);
-        rmse_motor  = sqrt(mean((omega_motor_model - omega_motor_pcode).^2));
-        rmse_output = sqrt(mean((omega_output_model - omega_output_pcode).^2));
-
-        tau_motor_percent_diff = NaN;
-        tau_out_percent_diff   = NaN;
-        if ~isnan(tau_motor_model) && ~isnan(tau_motor_pcode) && tau_motor_pcode ~= 0
-            tau_motor_percent_diff = 100 * (tau_motor_model - tau_motor_pcode) / tau_motor_pcode;
-        end
-        if ~isnan(tau_out_model) && ~isnan(tau_out_pcode) && tau_out_pcode ~= 0
-            tau_out_percent_diff = 100 * (tau_out_model - tau_out_pcode) / tau_out_pcode;
-        end
-        last_raw = raw;
-        theta_counts(k) = acc_counts;
-    end
-
-        fprintf(['Part I.j: Motor steady-state speed (model vs p-code) = %.3f vs %.3f rad/s, ', ...
-                 'RMSE = %.3f rad/s\n'], omega_motor_model_ss, omega_motor_pcode_ss, rmse_motor);
-        fprintf(['          Output steady-state speed (model vs p-code) = %.3f vs %.3f rad/s, ', ...
-                 'RMSE = %.3f rad/s\n'], omega_output_model_ss, omega_output_pcode_ss, rmse_output);
-        fprintf(['          Time constant (motor) model vs p-code = %.4f vs %.4f s (%.2f%%%% diff)\n'], ...
-                 tau_motor_model, tau_motor_pcode, tau_motor_percent_diff);
-        fprintf(['          Time constant (output) model vs p-code = %.4f vs %.4f s (%.2f%%%% diff); ', ...
-                 'analytic mechanical tau = %.4f s\n'], tau_out_model, tau_out_pcode, ...
-                 tau_out_percent_diff, tau_mech_analytic);
-
-        % Visualization for both motor and gearbox output
-        figure('Name','Part I.j Motor vs P-code','NumberTitle','off');
-        subplot(2,1,1);
-        plot(t_compare, omega_motor_model, 'LineWidth', 1.5); hold on;
-        plot(t_compare, omega_motor_pcode, '--', 'LineWidth', 1.5);
-        grid on;
-        title('Motor Speed Comparison (12 V Step)');
-        xlabel('Time [s]');
-        ylabel('\omega_{motor} [rad/s]');
-        legend('Analytical model','run\_Indy\_car.p','Location','southeast');
-
-        subplot(2,1,2);
-        plot(t_compare, omega_output_model, 'LineWidth', 1.5); hold on;
-        plot(t_compare, omega_output_pcode, '--', 'LineWidth', 1.5);
-        grid on;
-        title('Output (Steering) Speed Comparison (12 V Step)');
-        xlabel('Time [s]');
-        ylabel('\omega_{tire} [rad/s]');
-        legend('Analytical model','run\_Indy\_car.p','Location','southeast');
-
-        % Store comparison results
-        results_part1.gearbox_comparison = table(t_compare, omega_output_model, omega_output_pcode, ...
-            'VariableNames', {'Time_s','Omega_model_rad_s','Omega_pcode_rad_s'});
-        results_part1.gearbox_motor_comparison = table(t_compare, omega_motor_model, omega_motor_pcode, ...
-            'VariableNames', {'Time_s','Omega_motor_model_rad_s','Omega_motor_pcode_rad_s'});
-        results_part1.gearbox_tau_motor_model   = tau_motor_model;
-        results_part1.gearbox_tau_motor_pcode   = tau_motor_pcode;
-        results_part1.gearbox_tau_output_model  = tau_out_model;
-        results_part1.gearbox_tau_output_pcode  = tau_out_pcode;
-        results_part1.gearbox_tau_analytic      = tau_mech_analytic;
-        results_part1.gearbox_tau_motor_percent = tau_motor_percent_diff;
-        results_part1.gearbox_tau_output_percent = tau_out_percent_diff;
-        results_part1.gearbox_rmse_motor  = rmse_motor;
-        results_part1.gearbox_rmse_output = rmse_output;
-        results_part1.gearbox_ss_motor_model  = omega_motor_model_ss;
-        results_part1.gearbox_ss_motor_pcode  = omega_motor_pcode_ss;
-        results_part1.gearbox_ss_output_model = omega_output_model_ss;
-        results_part1.gearbox_ss_output_pcode = omega_output_pcode_ss;
-
-        % Close any file handles opened by run_Indy_car
-        fclose('all');
-    catch err
-        warning('Part I.j comparison skipped due to error: %s', err.message);
-        results_part1.gearbox_error = err.message;
-    end
-else
-    warning('Part I.j: run_Indy_car.p was not found on the MATLAB path. Comparison skipped.');
-    results_part1.gearbox_error = 'run_Indy_car.p not found';
-end
+    'VariableNames', {'Time_s','Omega_motor_model_rad_s','Omega_motor_data_rad_s'});
+results_part1.gearbox_error = 'Part I.j benchmark comparison not yet implemented.';
 
     fprintf(['Part I.j: Gearbox steady-state speed (model vs p-code) = %.3f vs %.3f rad/s, ', ...
              'RMSE = %.3f rad/s\n'], omega_model_ss, omega_pcode_ss, rmse_compare);
