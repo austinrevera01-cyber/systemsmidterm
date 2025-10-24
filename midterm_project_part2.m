@@ -104,23 +104,23 @@ C = results.Kp + results.Kd * s;
 results.T_closed = feedback(C * P_theta, 1);
 results.stepInfo = stepinfo(results.T_closed);
 
-% Step response plot
-figure('Name','Part II.a - Step Response','NumberTitle','off');
-step(results.T_closed);
-title('Closed-loop Step Response (Position)');
-ylabel('Angular Position [rad]');
-grid on;
-
-% Sinusoidal tracking
+% Time-domain responses
 f_ref = 10;                     % 10 Hz reference (within bandwidth)
 t = (0:1e-5:0.2).';             % Column vector time base
 ref = 0.1 * sin(2*pi*f_ref*t);  % 0.1 rad amplitude
 tracking = lsim(results.T_closed, ref, t);
 
-figure('Name','Part II.b - Sinusoidal Tracking','NumberTitle','off');
-plot(t, ref, 'r--', 'LineWidth', 1.3); hold on;
-plot(t, tracking, 'b', 'LineWidth', 1.4);
-legend('Reference','Output','Location','best');
+figure('Name','Part II.a/b - Time Responses','NumberTitle','off');
+subplot(1,2,1);
+step(results.T_closed);
+title('Closed-loop Step Response');
+ylabel('Angular Position [rad]');
+grid on;
+
+subplot(1,2,2);
+plot(t, tracking, 'b', 'LineWidth', 1.4); hold on;
+plot(t, ref, 'r--', 'LineWidth', 1.3);
+legend('Output','Reference','Location','best');
 title(sprintf('Sinusoidal Tracking (%.1f Hz)', f_ref));
 xlabel('Time [s]');
 ylabel('Angular Position [rad]');
