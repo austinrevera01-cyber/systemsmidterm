@@ -19,8 +19,9 @@
 %   h) Discuss when it is reasonable to neglect armature inductance.
 %   i) Re-derive the equations of motion when a gearbox with ratio N is
 %      attached to the motor and compute the resulting transfer function.
-%   j) Compare the gearbox-inclusive model to the provided run_Indy_car.p
-%      reference implementation.
+%   j) Provide a framework to compare the gearbox-inclusive model against
+%      externally supplied benchmark data (e.g., from run_Indy_car.p or lab
+%      measurements).
 %
 % The calculations rely on Control System Toolbox functionality.
 
@@ -215,9 +216,23 @@ results_part1.gear_ratio          = gear.N;
 results_part1.gear_load_inertia   = gear.Jload;
 results_part1.gear_encoder_counts = gear.encoder_counts;
 
-%% Part I.j - Comparison to run_Indy_car.p benchmark
-results_part1.gearbox_comparison = [];
-if exist('run_Indy_car','file')
+%% Part I.j - Framework for external gearbox benchmark comparison
+results_part1.gearbox_comparison = table([], [], [], ...
+    'VariableNames', {'Time_s','Omega_model_rad_s','Omega_reference_rad_s'});
+results_part1.gearbox_error = '';
+
+% The analytical gearbox response to a constant-voltage command is readily
+% available via G_omega_out_with_L.  If a reference dataset is available (for
+% example, lab measurements or the proprietary run_Indy_car.p output), supply
+% it in a struct named `gearbox_reference` with fields:
+%   gearbox_reference.Time_s             -> column vector of time stamps [s]
+%   gearbox_reference.VoltageCommand_V   -> column vector of voltage inputs [V]
+%   gearbox_reference.Omega_rad_s        -> column vector of output speeds [rad/s]
+% The code below will align the sample times, simulate the analytical model,
+% and assemble a comparison table and plot.  If the struct is absent, the
+% section simply reports the instructions above.
+
+if exist('gearbox_reference','var')
     try
         clear run_Indy_car; %#ok<CLRUN>
 
@@ -306,10 +321,10 @@ if exist('run_Indy_car','file')
         plot(t_compare, omega_model, 'LineWidth', 1.5); hold on;
         plot(t_compare, omega_output_pcode, '--', 'LineWidth', 1.5);
         grid on;
-        title('Steering Output Speed for 12 V Step');
+        title('Steering Output Speed Benchmark');
         xlabel('Time [s]');
         ylabel('\omega_{tire} [rad/s]');
-        legend('Analytical gearbox model','run\_Indy\_car.p','Location','southeast');
+        legend('Analytical gearbox model','Reference data','Location','southeast');
 
         % Store comparison results
         results_part1.gearbox_comparison = table(t_compare, omega_model, omega_output_pcode, ...
@@ -330,8 +345,8 @@ if exist('run_Indy_car','file')
         results_part1.gearbox_error = err.message;
     end
 else
-    warning('Part I.j skipped: run_Indy_car.p not available on MATLAB path.');
-    results_part1.gearbox_error = 'run_Indy_car.p not available';
+    disp('Part I.j: Provide a struct named gearbox_reference with fields Time_s,');
+    disp('           VoltageCommand_V, and Omega_rad_s to generate the comparison plot.');
 end
 
 %% Export summary for quick access (optional convenience for MATLAB users)
