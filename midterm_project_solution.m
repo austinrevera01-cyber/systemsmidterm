@@ -273,6 +273,34 @@ if exist('run_Indy_car','file')
         omega_model = lsim(G_omega_out_with_L, u_compare, t_compare);
         omega_model = omega_model(:);
 
+        % Steady-state and time-constant verification
+        tail_count = min(steps, max(5, round(0.1 * steps)));
+        omega_model_ss = mean(omega_model(end-tail_count+1:end));
+        omega_pcode_ss = mean(omega_output_pcode(end-tail_count+1:end));
+        tau_target_model = omega_model_ss * (1 - exp(-1));
+        tau_target_pcode = omega_pcode_ss * (1 - exp(-1));
+        idx_tau_model = find(omega_model >= tau_target_model, 1, 'first');
+        idx_tau_pcode = find(omega_output_pcode >= tau_target_pcode, 1, 'first');
+        tau_model = NaN;
+        tau_pcode = NaN;
+        if ~isempty(idx_tau_model)
+            tau_model = t_compare(idx_tau_model);
+        end
+        if ~isempty(idx_tau_pcode)
+            tau_pcode = t_compare(idx_tau_pcode);
+        end
+        tau_mech_analytic = J_total / (params.bm + (params.Ki * params.Kb) / params.R);
+        rmse_compare = sqrt(mean((omega_model - omega_output_pcode).^2));
+        tau_percent_diff = NaN;
+        if ~isnan(tau_model) && ~isnan(tau_pcode) && tau_pcode ~= 0
+            tau_percent_diff = 100 * (tau_model - tau_pcode) / tau_pcode;
+        end
+
+        fprintf(['Part I.j: Gearbox steady-state speed (model vs p-code) = %.3f vs %.3f rad/s, ', ...
+                 'RMSE = %.3f rad/s\n'], omega_model_ss, omega_pcode_ss, rmse_compare);
+        fprintf(['          Time constant from data (model vs p-code) = %.4f vs %.4f s (%.2f%%%% difference); ', ...
+                 'analytic mechanical tau = %.4f s\n'], tau_model, tau_pcode, tau_percent_diff, tau_mech_analytic);
+
         % Visualization
         figure('Name','Part I.j Gearbox Comparison','NumberTitle','off');
         plot(t_compare, omega_model, 'LineWidth', 1.5); hold on;
@@ -287,6 +315,13 @@ if exist('run_Indy_car','file')
         results_part1.gearbox_comparison = table(t_compare, omega_model, omega_output_pcode, ...
             'VariableNames', {'Time_s','Omega_model_rad_s','Omega_pcode_rad_s'});
         results_part1.gearbox_error = '';
+        results_part1.gearbox_tau_model = tau_model;
+        results_part1.gearbox_tau_pcode = tau_pcode;
+        results_part1.gearbox_tau_analytic = tau_mech_analytic;
+        results_part1.gearbox_tau_percent_diff = tau_percent_diff;
+        results_part1.gearbox_rmse = rmse_compare;
+        results_part1.gearbox_ss_model = omega_model_ss;
+        results_part1.gearbox_ss_pcode = omega_pcode_ss;
 
         % Close any file handles opened by run_Indy_car
         fclose('all');
