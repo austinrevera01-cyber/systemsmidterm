@@ -162,24 +162,26 @@ motor_counts  = zeros(steps, 1);
 theta_motor   = zeros(steps, 1);
 theta_output  = zeros(steps, 1);
 control_volts = zeros(steps, 1);
+error_hist    = zeros(steps, 1);
+integ_hist    = zeros(steps, 1);
 
-err_prev         = theta_ref;  % initial error (output starts at zero)
-integrator_state = 0;
+integrator_state   = 0;
+theta_output_prev  = 0;
 
 for k = 1:steps
-    tentative_state = integrator_state + err_prev * dt;
-    u_unsat         = Ki_I * tentative_state;
-    u               = saturate(u_unsat, Vmax);
+    err_k = theta_ref - theta_output_prev;
+    tentative_state = integrator_state + err_k * dt;
+    u_unsat = Ki_I * tentative_state;
+    u = saturate(u_unsat, Vmax);
 
-    % Basic anti-windup: freeze integrator when saturated in error direction
-    if (u ~= u_unsat) && sign(err_prev) == sign(u_unsat)
-        tentative_state = integrator_state;
-        u = saturate(Ki_I * tentative_state, Vmax);
+    % Only advance the integrator when not wound up in the saturation direction
+    if (abs(u_unsat) <= Vmax) || (sign(u_unsat) ~= sign(err_k))
+        integrator_state = tentative_state;
     end
 
-    integrator_state = tentative_state;
-
     control_volts(k) = u;
+    error_hist(k)    = err_k;
+    integ_hist(k)    = integrator_state;
 
     % Apply control to the p-code plant
     [~, ~, counts] = run_Indy_car(u);
@@ -199,8 +201,7 @@ for k = 1:steps
     motor_counts(k) = acc_counts;
     theta_motor(k)  = acc_counts * counts2rad;
     theta_output(k) = theta_motor(k) / gear.N;
-
-    err_prev = theta_ref - theta_output(k);
+    theta_output_prev = theta_output(k);
 end
 
 theta_output_deg = rad2deg(theta_output);
@@ -218,6 +219,11 @@ results.Ki_I = Ki_I;
 results.overshoot_pct = (max(theta_output) - theta_ref) / theta_ref * 100;
 results.settling_time = settling_time;
 results.ss_error_deg  = rad2deg(theta_ref - mean(theta_output(round(0.9*steps):end)));
+results.time          = t;
+results.theta_output_deg = theta_output_deg;
+results.control_volts = control_volts;
+results.error_history = error_hist;
+results.integrator_state = integ_hist;
 
 % Plot response and diagnostics
 figure('Name','Part II.c - Steering Response','NumberTitle','off');
