@@ -220,33 +220,76 @@ results_part1.gearbox_comparison = [];
 if exist('run_Indy_car','file')
     try
         clear run_Indy_car; %#ok<CLRUN>
-        Ts = 1e-3;
-        t_compare = (Ts:Ts:0.1).';
-        u_compare = params.Vs * ones(size(t_compare)); % Voltage input only
+
+        % Match the data-collection approach used in run_Indy_car_12V_demo.m
+        V_step  = params.Vs;
+        Ts      = 1e-3;        % Sample time enforced by the p-code interface
+        T_final = 0.5;         % Capture both transient and steady-state regions
+        CPR     = gear.encoder_counts; % Quadrature counts per revolution
+        MAXCNT  = 4096;        % Encoder rollover value from the demo script
+
+        steps    = round(T_final / Ts);
+        t_compare = (0:steps-1).' * Ts;
+        u_compare = V_step * ones(size(t_compare));
+
+        % Initialize the p-code persistent state as in the demo
+        Vel       = 0;
+        X0_values = [0 0 0 0 0];
+        WP_FILE   = 0;
+        [~, ~, ~] = run_Indy_car(0, Vel, X0_values, WP_FILE);
+
+        % Collect encoder counts with rollover protection
+        acc_counts   = 0;
+        last_raw     = NaN;
+        theta_counts = zeros(steps, 1);
+        for k = 1:steps
+            [~, ~, counts_k] = run_Indy_car(V_step);
+            raw = double(counts_k);
+            if isnan(last_raw)
+                acc_counts = raw;
+            else
+                d = raw - last_raw;
+                if d >  MAXCNT / 2, d = d - MAXCNT; end
+                if d < -MAXCNT / 2, d = d + MAXCNT; end
+                acc_counts = acc_counts + d;
+            end
+            last_raw = raw;
+            theta_counts(k) = acc_counts;
+        end
+
+        % Convert counts to motor angle and unwrap
+        theta_motor = unwrap(theta_counts * (2*pi / CPR));
+        theta_output = theta_motor / gear.N;
+
+        % Central-difference differentiation for speed estimate
+        omega_output_pcode = zeros(steps, 1);
+        if steps >= 3
+            omega_output_pcode(2:end-1) = (theta_output(3:end) - theta_output(1:end-2)) / (2 * Ts);
+            omega_output_pcode(1)       = (theta_output(2) - theta_output(1)) / Ts;
+            omega_output_pcode(end)     = (theta_output(end) - theta_output(end-1)) / Ts;
+        end
+
+        % Analytical gearbox model simulated on the same time grid
         omega_model = lsim(G_omega_out_with_L, u_compare, t_compare);
         omega_model = omega_model(:);
 
-        theta_motor = zeros(numel(t_compare), 1);
-        for k = 1:numel(t_compare)
-            [~, ~, counts_k] = run_Indy_car(u_compare(k));
-            theta_motor(k) = (counts_k / gear.encoder_counts) * 2*pi;
-        end
-        theta_motor = unwrap(theta_motor);
-        theta_output = theta_motor / gear.N;
-        omega_pcode = gradient(theta_output, Ts);
-
+        % Visualization
         figure('Name','Part I.j Gearbox Comparison','NumberTitle','off');
         plot(t_compare, omega_model, 'LineWidth', 1.5); hold on;
-        plot(t_compare, omega_pcode, '--', 'LineWidth', 1.5);
+        plot(t_compare, omega_output_pcode, '--', 'LineWidth', 1.5);
         grid on;
         title('Steering Output Speed for 12 V Step');
         xlabel('Time [s]');
         ylabel('\omega_{tire} [rad/s]');
         legend('Analytical gearbox model','run\_Indy\_car.p','Location','southeast');
 
-        results_part1.gearbox_comparison = table(t_compare, omega_model, omega_pcode, ...
+        % Store comparison results
+        results_part1.gearbox_comparison = table(t_compare, omega_model, omega_output_pcode, ...
             'VariableNames', {'Time_s','Omega_model_rad_s','Omega_pcode_rad_s'});
         results_part1.gearbox_error = '';
+
+        % Close any file handles opened by run_Indy_car
+        fclose('all');
     catch err
         warning('Part I.j comparison skipped due to error: %s', err.message);
         results_part1.gearbox_error = err.message;
