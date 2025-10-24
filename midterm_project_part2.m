@@ -74,15 +74,8 @@ bode(T_closed);
 grid on;
 title('Bode Plot of Closed-loop Position System');
 
-%% =================== Part II.c - Integral Controller Bench Test ===================
+%% =================== Part II.c - PD Controller Bench Test ===================
 clear run_Indy_car; %#ok<CLRUN> reset persistent state inside the p-code
-
-zeta_I = sqrt((log(0.05)^2) / (pi^2 + log(0.05)^2));
-Ts_I   = 0.025;
-wn_I   = 4 / (zeta_I * Ts_I);
-
-Ki_I = (Jload * L / Ki) * wn_I^4;
-fprintf('\nIntegral gain (continuous-time): Ki_I = %.2f\n', Ki_I);
 
 dt    = 0.001;            % sample time enforced by run_Indy_car [s]
 t_end = 10;               % simulation horizon [s]
@@ -100,30 +93,31 @@ X0_values = [0 0 0 0 0];                % default initial conditions
 WP_FILE   = 0;                          % no waypoint tracking
 [~, ~, ~] = run_Indy_car(0, Vel, X0_values, WP_FILE); % clear internal state
 
-acc_counts    = 0;
-last_raw      = NaN;
-motor_counts  = zeros(steps, 1);
-theta_motor   = zeros(steps, 1);
-theta_output  = zeros(steps, 1);
-control_volts = zeros(steps, 1);
+acc_counts     = 0;
+last_raw       = NaN;
+motor_counts   = zeros(steps, 1);
+theta_motor    = zeros(steps, 1);
+theta_output   = zeros(steps, 1);
+control_volts  = zeros(steps, 1);
+kp_component   = zeros(steps, 1);
+kd_component   = zeros(steps, 1);
 
-err_prev         = theta_ref;  % initial output is zero
-integrator_state = 0;
+err_prev       = theta_ref;  % initial output is zero
+theta_prev_out = 0;
+
+fprintf('\nUsing PD gains: Kp = %.2f, Kd = %.5f\n', Kp, Kd);
 
 for k = 1:steps
-    tentative_state = integrator_state + err_prev * dt;
-    u_unsat         = Ki_I * tentative_state;
-    u               = max(min(u_unsat, Vmax), -Vmax);
-
-    if u ~= u_unsat
-        if (u > 0 && err_prev > 0) || (u < 0 && err_prev < 0)
-            tentative_state = integrator_state;  % freeze integrator in windup
-        end
-    end
-
-    integrator_state = tentative_state;
+    error_k  = theta_ref - theta_prev_out;
+    deriv_k  = (error_k - err_prev) / dt;
+    u_p      = Kp * error_k;
+    u_d      = Kd * deriv_k;
+    u_unsat  = u_p + u_d;
+    u        = max(min(u_unsat, Vmax), -Vmax);
 
     control_volts(k) = u;
+    kp_component(k)  = u_p;
+    kd_component(k)  = u_d;
 
     [~, ~, counts] = run_Indy_car(u);
     raw = double(counts);
@@ -142,7 +136,8 @@ for k = 1:steps
     theta_motor(k)  = acc_counts * counts2rad;
     theta_output(k) = theta_motor(k) / N;
 
-    err_prev = theta_ref - theta_output(k);
+    err_prev       = error_k;
+    theta_prev_out = theta_output(k);
 end
 
 theta_output_deg = rad2deg(theta_output);
@@ -168,15 +163,24 @@ grid on;
 legend('run\_Indy\_car output', 'Reference', 'Location', 'southeast');
 xlabel('Time [s]');
 ylabel('Steering Angle [deg]');
-title('Part II.c: Integral Controller vs. run\_Indy\_car.p');
+title('Part II.c: PD Controller vs. run\_Indy\_car.p');
 
 figure('Name', 'Part II.c Control Effort', 'NumberTitle', 'off');
-plot(t_vec, control_volts, 'LineWidth', 1.5);
+plot(t_vec, control_volts, 'LineWidth', 1.5); hold on;
 yline([Vmax, -Vmax], 'k--', 'LineWidth', 1.0);
 grid on;
 xlabel('Time [s]');
 ylabel('Control Voltage [V]');
-title('Integral Control Effort with Saturation Limits');
+title('PD Control Effort with Saturation Limits');
+
+figure('Name', 'Part II.c PD Components', 'NumberTitle', 'off');
+plot(t_vec, kp_component, 'LineWidth', 1.3); hold on;
+plot(t_vec, kd_component, 'LineWidth', 1.3);
+grid on;
+legend('K_p e', 'K_d d/dt(e)');
+xlabel('Time [s]');
+ylabel('Control Contribution [V]');
+title('PD Term Contributions');
 
 figure('Name', 'Part II.c Motor Angle', 'NumberTitle', 'off');
 plot(t_vec, rad2deg(theta_motor), 'LineWidth', 1.5);
