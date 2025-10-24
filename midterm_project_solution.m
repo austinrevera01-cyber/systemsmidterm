@@ -326,6 +326,9 @@ if pcode_available
         if ~isnan(tau_out_model) && ~isnan(tau_out_pcode) && tau_out_pcode ~= 0
             tau_out_percent_diff = 100 * (tau_out_model - tau_out_pcode) / tau_out_pcode;
         end
+        last_raw = raw;
+        theta_counts(k) = acc_counts;
+    end
 
         fprintf(['Part I.j: Motor steady-state speed (model vs p-code) = %.3f vs %.3f rad/s, ', ...
                  'RMSE = %.3f rad/s\n'], omega_motor_model_ss, omega_motor_pcode_ss, rmse_motor);
@@ -387,6 +390,52 @@ else
     results_part1.gearbox_error = 'run_Indy_car.p not found';
 end
 
+    fprintf(['Part I.j: Gearbox steady-state speed (model vs p-code) = %.3f vs %.3f rad/s, ', ...
+             'RMSE = %.3f rad/s\n'], omega_model_ss, omega_pcode_ss, rmse_compare);
+    fprintf(['          Time constant from data (model vs p-code) = %.4f vs %.4f s (%.2f%%%% difference); ', ...
+             'analytic mechanical tau = %.4f s\n'], tau_model, tau_pcode, tau_percent_diff, tau_mech_analytic);
+
+    % Visualization - output speed comparison
+    figure('Name','Part I.j Gearbox Output Comparison','NumberTitle','off');
+    plot(t_compare, omega_output_model, 'LineWidth', 1.5); hold on;
+    plot(t_compare, omega_output_pcode, '--', 'LineWidth', 1.5);
+    grid on;
+    title('Steering Output Speed Benchmark (12 V Step)');
+    xlabel('Time [s]');
+    ylabel('\omega_{out} [rad/s]');
+    legend('Analytical gearbox model','run\_Indy\_car.p data','Location','southeast');
+
+    % Visualization - motor speed comparison
+    figure('Name','Part I.j Motor Speed Comparison','NumberTitle','off');
+    plot(t_compare, omega_motor_model, 'LineWidth', 1.5); hold on;
+    plot(t_compare, omega_motor_pcode, '--', 'LineWidth', 1.5);
+    grid on;
+    title('Motor Speed Benchmark (12 V Step)');
+    xlabel('Time [s]');
+    ylabel('\omega_{m} [rad/s]');
+    legend('Analytical motor model','run\_Indy\_car.p data','Location','southeast');
+
+    % Store comparison results
+    results_part1.gearbox_comparison = table(t_compare, omega_output_model, omega_output_pcode, ...
+        'VariableNames', {'Time_s','Omega_model_rad_s','Omega_pcode_rad_s'});
+    results_part1.gearbox_motor_comparison = table(t_compare, omega_motor_model, omega_motor_pcode, ...
+        'VariableNames', {'Time_s','Omega_motor_model_rad_s','Omega_motor_pcode_rad_s'});
+    results_part1.gearbox_error = '';
+    results_part1.gearbox_tau_model = tau_model;
+    results_part1.gearbox_tau_pcode = tau_pcode;
+    results_part1.gearbox_tau_analytic = tau_mech_analytic;
+    results_part1.gearbox_tau_percent_diff = tau_percent_diff;
+    results_part1.gearbox_rmse = rmse_compare;
+    results_part1.gearbox_ss_model = omega_model_ss;
+    results_part1.gearbox_ss_pcode = omega_pcode_ss;
+    results_part1.gearbox_pfile = pfile;
+
+    % Close any file handles opened by run_Indy_car
+    fclose('all');
+catch err
+    warning('Part I.j comparison skipped due to error: %s', err.message);
+    results_part1.gearbox_error = err.message;
+end
 %% Export summary for quick access (optional convenience for MATLAB users)
 results_part1.G_omega_with_L = G_omega_with_L;
 results_part1.G_omega_no_L   = G_omega_no_L;
