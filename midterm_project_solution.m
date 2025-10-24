@@ -233,7 +233,7 @@ if pcode_available
         V_step  = params.Vs;
         Ts      = 1e-3;        % Sample time enforced by the p-code interface
         T_final = 0.5;         % Capture both transient and steady-state regions
-        CPR     = gear.encoder_counts; % Quadrature counts per revolution
+        CPR     = gear.encoder_counts; % Quadrature counts per motor revolution
         MAXCNT  = 4096;        % Encoder rollover value from the demo script
 
         steps     = round(T_final / Ts);
